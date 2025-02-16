@@ -3,32 +3,65 @@
 
 //run the following command to uninstall all conflicting packages
 
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
+$ for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
 
 
 //run the following command to install docker
 
-sudo apt-get update
-sudo apt-get install ca-certificates curl
-sudo apt-get install docker.io
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+$ sudo apt-get update
+$ sudo apt-get install ca-certificates curl
+$ sudo apt-get install docker.io
+$ sudo install -m 0755 -d /etc/apt/keyrings
+$ sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+$ sudo chmod a+r /etc/apt/keyrings/docker.asc
 
-echo \
+$ echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
   $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
   
-sudo apt-get update
+$ sudo apt-get update
 
 
 //to verify the installation run the following command
 
-sudo docker run hello-world
+$ sudo docker run hello-world
 
 
 //after that go to (https://optee.readthedocs.io/en/latest/building/prerequisites.html#prerequisites) and copy the text and paste it to file that you name it "Dockerfile".
 
 sudo apt-get install docker-compose
 docker buildx build -t optee-build .
+
+
+//Then to do step 2 (Android repo) we should do the following, (<optee-project> = your project name):
+
+$ mkdir <optee-project>
+$ cd <optee-project>
+$ repo init --partial-clone -b main -u https://android.googlesource.com/platform/manifest
+$ repo sync -c -j8
+
+//You need to make sure that you have at least 300GB empty space to download the repo.
+//If you have small storage you should do the following commands to expand it outside VM:
+
+$ cd "C:\Program Files\Oracle\VirtualBox"
+$ VBoxManage.exe modifyhd "C:\Users\YourUser\VirtualBox VMs\YourVM\YourDisk.vdi" --resize 409600
+$ VBoxManage clonemedium disk "C:\Users\YourUser\VirtualBox VMs\YourVM\YourDisk.vdi" "C:\Users\YourUser\VirtualBox VMs\YourVM\Fixed_Disk.vdi" --variant Fixed
+$ ls -lh /path/to/your/fixed_disk.vdi
+
+
+//Step 3 make sure that you still at your <optee-project>, (rpi3) cause we use raspberry pi 3 and 4.0.0 is the version of OP-TEE:
+
+$ repo init -u https://github.com/OP-TEE/manifest.git -m rpi3.xml -b 4.0.0
+$ repo sync -j4 --no-clone-bundle
+
+
+//Step 4:
+
+$ cd <optee-project>/build
+$ make -j2 toolchains
+
+//Step 5, maybe you will find some problems (messing Packages) you jest need to install them.
+//(PLATFORM=rpi3) cause we will work on rpi3 but you can download all platforms without writing the type of the platform.
+
+make -j$(nproc) PLATFORM=rpi3
