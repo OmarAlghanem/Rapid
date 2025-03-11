@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <openssl/evp.h> // Added for EVP functions
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <sys/ioctl.h>
@@ -14,7 +15,6 @@
 #include <sys/stat.h>
 #include <openssl/sha.h>
 #include <time.h>
-
 #define PORT 8443
 #define BUFFER_SIZE 1024
 #define I2C_DEVICE "/dev/i2c-1"
@@ -81,16 +81,36 @@ int calculate_file_hash(const char *filepath, unsigned char *hash_output) {
     FILE *file = fopen(filepath, "rb");
     if (!file) return -1;
 
-    SHA256_CTX sha256_ctx;
-    SHA256_Init(&sha256_ctx);
+    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+    if (!mdctx) {
+        fclose(file);
+        return -1;
+    }
+
+    if (EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL) != 1) {
+        EVP_MD_CTX_free(mdctx);
+        fclose(file);
+        return -1;
+    }
 
     unsigned char buffer[4096];
     size_t bytes_read;
     while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        SHA256_Update(&sha256_ctx, buffer, bytes_read);
+        if (EVP_DigestUpdate(mdctx, buffer, bytes_read) != 1) {
+            EVP_MD_CTX_free(mdctx);
+            fclose(file);
+            return -1;
+        }
     }
 
-    SHA256_Final(hash_output, &sha256_ctx);
+    unsigned int len;
+    if (EVP_DigestFinal_ex(mdctx, hash_output, &len) != 1) {
+        EVP_MD_CTX_free(mdctx);
+        fclose(file);
+        return -1;
+    }
+
+    EVP_MD_CTX_free(mdctx);
     fclose(file);
     return 0;
 }
@@ -122,7 +142,7 @@ void configure_context(SSL_CTX *ctx) {
 }
 
 int main() {
-    const char *hostname = "192.168.59.41";
+    const char *hostname = "192.168.62.41";
     struct sockaddr_in addr;
     SSL_CTX *ctx = create_context();
     configure_context(ctx);
