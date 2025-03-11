@@ -17,7 +17,8 @@ pid_t get_pid_by_name(const char *proc_name) {
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type == DT_DIR && atoi(entry->d_name) > 0) {
             char cmd_path[256];
-            snprintf(cmd_path, sizeof(cmd_path), "/proc/%s/comm", entry->d_name);
+            // Fix: Limit PID to 7 characters to avoid truncation
+            snprintf(cmd_path, sizeof(cmd_path), "/proc/%.7s/comm", entry->d_name);
 
             FILE *cmd_file = fopen(cmd_path, "r");
             if (cmd_file) {
