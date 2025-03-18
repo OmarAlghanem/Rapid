@@ -173,8 +173,15 @@ int main() {
     }
     SSL_write(ssl, hash_msg, strlen(hash_msg));
 
-    // Main loop
+    // Set up I2C and process the handshake message from the server
     int i2c_fd = setup_i2c();
+    char handshake_msg[BUFFER_SIZE];
+    int handshake_bytes = SSL_read(ssl, handshake_msg, BUFFER_SIZE - 1);
+    if (handshake_bytes > 0) {
+        handshake_msg[handshake_bytes] = '\0';
+        send_to_i2c(i2c_fd, handshake_msg);
+    }
+
     time_t last_check = time(NULL);
     while (1) {
         // Periodic hash check
