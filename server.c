@@ -1,4 +1,3 @@
-// server.c (with hash printing)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,7 +51,10 @@ int main() {
         SSL_set_fd(ssl, client_fd);
         SSL_accept(ssl);
 
+        int client_blocked = 0;
+        uint32_t key = 0;  
         char buffer[BUFFER_SIZE];
+        
         int bytes = SSL_read(ssl, buffer, BUFFER_SIZE - 1);
         if (bytes > 0) {
             buffer[bytes] = '\0';
@@ -66,46 +68,55 @@ int main() {
                     SSL_write(ssl, "HASH_STORED\n", 12);
                 } else {
                     printf("[SERVER] Comparing with stored hash: %s\n", stored_hash);
-                    if (strncmp(buffer + 5, stored_hash, 64) == 0) {
+                    if (strncmp(buffer + 5, stored_hash, 64) != 0) {
+                        SSL_write(ssl, "HASH_MISMATCH\n", 14);
+                        printf("[SERVER] Hash mismatch! Blocking client.\n");
+                        client_blocked = 1;
+                    } else {
                         SSL_write(ssl, "HASH_OK\n", 8);
                         printf("[SERVER] Hash matches!\n");
-                    } else {
-                        SSL_write(ssl, "HASH_MISMATCH\n", 14);
-                        printf("[SERVER] Hash mismatch detected!\n");
                     }
                 }
             }
         }
 
-        // Rest of the server code...
-        uint32_t key = rand();
-        uint32_t counter = rand();
-        char handshake[BUFFER_SIZE];
-        snprintf(handshake, sizeof(handshake), "KEY=%u;CNT=%u\n", key, counter);
-        SSL_write(ssl, handshake, strlen(handshake));
+        uint32_t ticket_counter = 0;
+        if (!client_blocked) {
+            key = rand();  
+            uint32_t counter = rand();  
+            char handshake[BUFFER_SIZE];
+            snprintf(handshake, sizeof(handshake), "KEY=%u;CNT=%u\n", key, counter);
+            SSL_write(ssl, handshake, strlen(handshake));
+            ticket_counter = counter;
+        }
 
         while (1) {
             bytes = SSL_read(ssl, buffer, BUFFER_SIZE - 1);
             if (bytes <= 0) break;
 
             buffer[bytes] = '\0';
+            
+            if (client_blocked) {
+                printf("[SERVER] Ignoring request from blocked client\n");
+                continue;
+            }
+
             if (strstr(buffer, "TICKET")) {
                 char ticket[32];
-                snprintf(ticket, sizeof(ticket), "%d\n", counter ^ key);
+                snprintf(ticket, sizeof(ticket), "%u\n", ticket_counter ^ key);
                 SSL_write(ssl, ticket, strlen(ticket));
-                counter++;
+                printf("[SERVER] Sent valid ticket\n");
+                ticket_counter++; 
             }
             else if (strncmp(buffer, "HASH:", 5) == 0) {
-                // Handle periodic hashes
                 printf("\n[SERVER] Received periodic hash: %s\n", buffer + 5);
-                printf("[SERVER] Stored hash: %s\n", stored_hash);
-                
-                if (strncmp(buffer + 5, stored_hash, 64) == 0) {
+                if (strncmp(buffer + 5, stored_hash, 64) != 0) {
+                    SSL_write(ssl, "HASH_MISMATCH\n", 14);
+                    printf("[SERVER] Periodic hash mismatch! Blocking client.\n");
+                    client_blocked = 1;
+                } else {
                     SSL_write(ssl, "HASH_OK\n", 8);
                     printf("[SERVER] Periodic hash matches!\n");
-                } else {
-                    SSL_write(ssl, "HASH_MISMATCH\n", 14);
-                    printf("[SERVER] Periodic hash mismatch!\n");
                 }
             }
         }
