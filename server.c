@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-
+#define final_cum_hash fa2f958384759d524a52ac42840b57c0547323bcf113895c4abbe244e38b1461
 #define PORT 8443
 #define BUFFER_SIZE 1024
 
@@ -80,14 +80,14 @@ int main() {
             }
         }
 
-        uint32_t ticket_counter = 0;
+        uint32_t final_cum_hash_counter = 0;
         if (!client_blocked) {
             key = rand();  
             uint32_t counter = rand();  
             char handshake[BUFFER_SIZE];
             snprintf(handshake, sizeof(handshake), "KEY=%u;CNT=%u\n", key, counter);
             SSL_write(ssl, handshake, strlen(handshake));
-            ticket_counter = counter;
+            final_cum_hash_counter = counter;
         }
 
         while (1) {
@@ -101,12 +101,12 @@ int main() {
                 continue;
             }
 
-            if (strstr(buffer, "TICKET")) {
-                char ticket[32];
-                snprintf(ticket, sizeof(ticket), "%u\n", ticket_counter ^ key);
-                SSL_write(ssl, ticket, strlen(ticket));
-                printf("[SERVER] Sent valid ticket\n");
-                ticket_counter++; 
+            if (strstr(buffer, final_cum_hash)) {
+                char final_cum_hash[32];
+                snprintf(final_cum_hash, sizeof(final_cum_hash), "%u\n", final_cum_hash_counter ^ key);
+                SSL_write(ssl, final_cum_hash, strlen(final_cum_hash));
+                printf("[SERVER] Sent valid final_cum_hash\n");
+                final_cum_hash_counter++; 
             }
             else if (strncmp(buffer, "HASH:", 5) == 0) {
                 printf("\n[SERVER] Received periodic hash: %s\n", buffer + 5);
