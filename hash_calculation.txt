@@ -1,0 +1,95 @@
+// In client_robo.c
+char *initial_hash = NULL;
+char *dynamic_hash = NULL;
+
+void comm_init(const char *hostname, int port) {
+    // ... (existing SSL/I2C setup code)
+
+    // Calculate and store the initial hash (critical path only)
+    initial_hash = calculate_program_hash(); // Excludes rest() by default
+    if (!initial_hash) {
+        fprintf(stderr, "Failed to calculate initial hash\n");
+        exit(EXIT_FAILURE);
+    }
+    printf("Initial Hash (Critical Path): %s\n", initial_hash);
+
+    // Send initial hash to server for verification
+    if (comm_send_hash(initial_hash, 1) != 0) {
+        fprintf(stderr, "Server rejected initial hash\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+
+int comm_send_command(const char *command) {
+    // Calculate dynamic hash (includes rest() if called)
+    dynamic_hash = calculate_program_hash();
+    if (!dynamic_hash || comm_send_hash(dynamic_hash, 0) != 0) {
+        fprintf(stderr, "Dynamic hash verification failed\n");
+        if (dynamic_hash) free(dynamic_hash);
+        return -1;
+    }
+
+    // Execute command
+    if (strcmp(command, "spin ninety") == 0) {
+        spin_ninety();
+    } else if (strcmp(command, "spin oneeighty") == 0) {
+        spin_oneeighty();
+    } else if (strcmp(command, "rest") == 0) {
+        rest(); // Sets rest_called = 1
+    }
+
+    // Cleanup
+    free(dynamic_hash);
+    dynamic_hash = NULL;
+    return 0;
+}
+
+
+char *calculate_program_hash() {
+    size_t opcode_length = 28; // Adjust based on objdump output
+    unsigned char *current_hash = NULL;
+    unsigned int hash_length = 0;
+
+    // Critical functions (always hashed)
+    void (*critical_functions[])(void) = {spin_ninety, spin_oneeighty};
+    int num_functions = 2;
+
+    // Include rest() ONLY if it was called
+    if (rest_called) {
+        critical_functions[2] = rest;
+        num_functions = 3;
+    }
+
+    // Compute hash
+    for (int i = 0; i < num_functions; i++) {
+        unsigned char *opcode = get_opcode((void *)critical_functions[i], opcode_length);
+        if (!opcode) {
+            fprintf(stderr, "Failed to get opcode for function %d\n", i);
+            return NULL;
+        }
+
+        if (i == 0) {
+            current_hash = compute_sha256(opcode, opcode_length, &hash_length);
+        } else {
+            unsigned char *combined = malloc(hash_length + opcode_length);
+            memcpy(combined, current_hash, hash_length);
+            memcpy(combined + hash_length, opcode, opcode_length);
+            free(current_hash);
+            current_hash = compute_sha256(combined, hash_length + opcode_length, &hash_length);
+            free(combined);
+        }
+        free(opcode);
+    }
+
+    // Convert to hex string
+    char *hash_str = malloc(hash_length * 2 + 1);
+    for (size_t i = 0; i < hash_length; i++) {
+        sprintf(&hash_str[i*2], "%02x", current_hash[i]);
+    }
+    hash_str[hash_length * 2] = '\0';
+    free(current_hash);
+
+    return hash_str;
+}
