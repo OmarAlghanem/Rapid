@@ -1,86 +1,81 @@
-// In client_robo.c
-char *initial_hash = NULL;
-char *dynamic_hash = NULL;
+#ifndef COMM_SERVO_H
+#define COMM_SERVO_H
 
-void comm_init(const char *hostname, int port) {
-    // ... (existing SSL/I2C setup code)
+// [Previous includes...]
 
-    // Calculate and store the initial hash (critical path only)
-    initial_hash = calculate_program_hash(); // Excludes rest() by default
-    if (!initial_hash) {
-        fprintf(stderr, "Failed to calculate initial hash\n");
-        exit(EXIT_FAILURE);
-    }
-    printf("Initial Hash (Critical Path): %s\n", initial_hash);
+/* State Tracking */
+extern int rest_called;  // Global flag to track if rest() was called
+extern unsigned long execution_sequence; // Tracks order of function calls
 
-    // Send initial hash to server for verification
-    if (comm_send_hash(initial_hash, 1) != 0) {
-        fprintf(stderr, "Server rejected initial hash\n");
-        exit(EXIT_FAILURE);
-    }
+/* [Rest of header...] */
+#endif
+
+
+
+------------------------------------------------------------------------
+// Global state variables
+int rest_called = 0;
+unsigned long execution_sequence = 0;
+
+// Updated rest() function
+void rest() {
+    softPwmWrite(BASE_SERVO_PIN, 0);
+    printf("Executed: rest position\n");
+    delay(1000);
+    rest_called = 1;
+    execution_sequence++;
 }
 
-
-
-int comm_send_command(const char *command) {
-    // Calculate dynamic hash (includes rest() if called)
-    dynamic_hash = calculate_program_hash();
-    if (!dynamic_hash || comm_send_hash(dynamic_hash, 0) != 0) {
-        fprintf(stderr, "Dynamic hash verification failed\n");
-        if (dynamic_hash) free(dynamic_hash);
-        return -1;
-    }
-
-    // Execute command
-    if (strcmp(command, "spin ninety") == 0) {
-        spin_ninety();
-    } else if (strcmp(command, "spin oneeighty") == 0) {
-        spin_oneeighty();
-    } else if (strcmp(command, "rest") == 0) {
-        rest(); // Sets rest_called = 1
-    }
-
-    // Cleanup
-    free(dynamic_hash);
-    dynamic_hash = NULL;
-    return 0;
-}
-
-
+// Updated calculate_program_hash()
 char *calculate_program_hash() {
-    size_t opcode_length = 28; // Adjust based on objdump output
+    size_t opcode_length = 28; // Should match actual function size
     unsigned char *current_hash = NULL;
     unsigned int hash_length = 0;
-
-    // Critical functions (always hashed)
-    void (*critical_functions[])(void) = {spin_ninety, spin_oneeighty};
+    
+    // Always include these core functions
+    void (*functions[])(void) = {spin_ninety, spin_oneeighty};
     int num_functions = 2;
 
-    // Include rest() ONLY if it was called
-    if (rest_called) {
-        critical_functions[2] = rest;
-        num_functions = 3;
-    }
+    // Create a unique execution context buffer
+    unsigned char context[32];
+    snprintf((char*)context, sizeof(context), "SEQ:%lu:REST:%d", 
+             execution_sequence, rest_called);
 
-    // Compute hash
+    // Hash the execution context first
+    current_hash = compute_sha256(context, strlen((char*)context), &hash_length);
+    
+    // Then hash each function's opcode
     for (int i = 0; i < num_functions; i++) {
-        unsigned char *opcode = get_opcode((void *)critical_functions[i], opcode_length);
+        unsigned char *opcode = get_opcode((void*)functions[i], opcode_length);
         if (!opcode) {
             fprintf(stderr, "Failed to get opcode for function %d\n", i);
+            free(current_hash);
             return NULL;
         }
 
-        if (i == 0) {
-            current_hash = compute_sha256(opcode, opcode_length, &hash_length);
-        } else {
+        unsigned char *combined = malloc(hash_length + opcode_length);
+        memcpy(combined, current_hash, hash_length);
+        memcpy(combined + hash_length, opcode, opcode_length);
+        free(current_hash);
+        free(opcode);
+        
+        current_hash = compute_sha256(combined, hash_length + opcode_length, &hash_length);
+        free(combined);
+    }
+
+    // If rest was called, include its opcode
+    if (rest_called) {
+        unsigned char *rest_opcode = get_opcode((void*)rest, opcode_length);
+        if (rest_opcode) {
             unsigned char *combined = malloc(hash_length + opcode_length);
             memcpy(combined, current_hash, hash_length);
-            memcpy(combined + hash_length, opcode, opcode_length);
+            memcpy(combined + hash_length, rest_opcode, opcode_length);
             free(current_hash);
+            free(rest_opcode);
+            
             current_hash = compute_sha256(combined, hash_length + opcode_length, &hash_length);
             free(combined);
         }
-        free(opcode);
     }
 
     // Convert to hex string
@@ -92,4 +87,46 @@ char *calculate_program_hash() {
     free(current_hash);
 
     return hash_str;
+}
+
+// Updated comm_send_command()
+int comm_send_command(const char *command) {
+    // Calculate fresh dynamic hash
+    char *current_hash = calculate_program_hash();
+    if (!current_hash || comm_send_hash(current_hash, 0) != 0) {
+        if (current_hash) free(current_hash);
+        return -1;
+    }
+
+    // Execute command
+    if (strcmp(command, "spin ninety") == 0) {
+        spin_ninety();
+        execution_sequence++;
+    } else if (strcmp(command, "spin oneeighty") == 0) {
+        spin_oneeighty();
+        execution_sequence++;
+    } else if (strcmp(command, "rest") == 0) {
+        rest(); // This increments execution_sequence and sets rest_called
+    }
+
+    free(current_hash);
+    return 0;
+}
+
+------------------------------------------------------------------------------
+void comm_init(const char *hostname, int port) {
+    // Reset state tracking
+    rest_called = 0;
+    execution_sequence = 0;
+    
+    // [Rest of your existing initialization code...]
+    
+    // Calculate initial hash (before any commands execute)
+    char *initial_hash = calculate_program_hash();
+    if (!initial_hash || comm_send_hash(initial_hash, 1) != 0) {
+        fprintf(stderr, "Initial hash verification failed\n");
+        if (initial_hash) free(initial_hash);
+        exit(EXIT_FAILURE);
+    }
+    free(initial_hash);
 }
